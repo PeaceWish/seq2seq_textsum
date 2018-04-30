@@ -8,15 +8,7 @@ import numpy as np
 import time
 import tensorflow as tf
 import os
-
-
-class Batch:
-    #batch类，里面包含了encoder输入，decoder输入以及他们的长度
-    def __init__(self):
-        self.encoder_inputs = []
-        self.encoder_inputs_length = []
-        self.decoder_targets = []
-        self.decoder_targets_length = []
+import random
 
 def extract_character_vocab(data):
     '''
@@ -46,48 +38,38 @@ def loadDataset(source_file, target_file):
     # 对字分词进行转换
     # 对于source来说 不需要添加<EOS>标记
     source_int = [[source_segment_to_int.get(letter, source_segment_to_int['<UNK>'])
-                   for letter in line] for line in source_data.split('\n')]
+                   for letter in line.split()] for line in source_data.split('\n')]
     # 对于target来说 需要添加<EOS>标记
     target_int = [[target_segment_to_int.get(letter, target_segment_to_int['<UNK>'])
-                   for letter in line] + [target_segment_to_int['<EOS>']] for line in target_data.split('\n')]
+                   for letter in line.s] + [target_segment_to_int['<EOS>']] for line in target_data.split('\n')]
     return [source_int_to_segment, source_segment_to_int], \
            [target_int_to_segment, target_segment_to_int], \
            [source_int, target_int]
 
 
-def pad_sentence_batch(sentence_batch, pad_int):
-    '''
-    对batch中的序列进行补全，保证batch中的每行都有相同的sequence_length
-
-    参数：
-    - sentence_batch
-    - pad_int: <PAD>对应索引号
-    '''
-    max_sentence = max([len(sentence) for sentence in sentence_batch])
-    return [sentence + [pad_int] * (max_sentence - len(sentence)) for sentence in sentence_batch]
-
-
-def get_batches(targets, sources, batch_size, source_pad_int, target_pad_int):
-    '''
-    定义生成器，用来获取batch
-    '''
-    for batch_i in range(0, len(sources) // batch_size):
-        start_i = batch_i * batch_size
-        sources_batch = sources[start_i:start_i + batch_size]
-        targets_batch = targets[start_i:start_i + batch_size]
+# 创建批次 每次使用getBatch方法后得到一个经过填充的批次即可
+def get_batches(data, batch_size, source_pad_int, target_pad_int):
+    sources, targets = data
+    data_len = len(sources)
+    for batch_i in range(0, data_len, batch_size):
+        sources_batch = sources[batch_i:min(batch_i + batch_size, data_len)]
+        targets_batch = targets[batch_i:min(batch_i + batch_size, data_len)]
         # 补全序列
         padded_sources_batch = np.array(pad_sentence_batch(sources_batch, source_pad_int))
         padded_targets_batch = np.array(pad_sentence_batch(targets_batch, target_pad_int))
 
-        # 记录每条记录的长度
-        targets_lengths = []
-        for target in targets_batch:
-            targets_lengths.append(len(target))
+        # 记录每一条记录的长度
+        source_sequence_length = []
+        target_sequence_length = []
+        for s in sources_batch:
+            source_sequence_length.append(len(s))
+        for t in targets_batch:
+            target_sequence_length.append(len(t))
 
-        source_lengths = []
-        for source in sources_batch:
-            source_lengths.append(len(source))
+        yield padded_sources_batch, padded_targets_batch, source_sequence_length, target_sequence_length
 
-        yield padded_targets_batch, padded_sources_batch, targets_lengths, source_lengths
 
+def pad_sentence_batch(sentence_batch, pad_int):
+    max_sentence = max([len(sentence) for sentence in sentence_batch])
+    return [sentence + [pad_int] * (max_sentence - len(sentence)) for sentence in sentence_batch]
 
