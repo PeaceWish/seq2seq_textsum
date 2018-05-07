@@ -1,69 +1,75 @@
 import tensorflow as tf
+from data_utils import loadDataset, get_batches, get_infer_batches
+from model import TrainModel, InferenceModel
+import itertools
 
-from data_loader import loadDataset,getBatches, sentence2enco
-from model import Seq2SeqModel
-from tqdm import tqdm
-import math
-import os
+int_to_vocab, vocab_to_int, sample = loadDataset("data\\article_segment.txt", "data\\summarization_segment.txt")
+source_input, target_input = sample
+# 设置基本参数
+# 词表大小
+vocab_size = len(int_to_vocab)
+# embedding维度
+embedding_size = 128
+# rnn隐藏单元数
+num_units = 64
+# rnn层数
+num_layers = 2
+# 输出最大长度
+max_target_sequence_length = 60
+#
+max_gradient_norm = 5
+# 学习率
+learning_rate = 0.01
+# 批次大小
+batch_size = 20
+# 推理每批一個句子
+infer_batch_size = 2
+# 训练多少代
+epochs = 50
+# 多少步预测一下
+infer_step = 50
+# beam 大小
+beam_size = 5
+# 分词映射
+segment_to_int = vocab_to_int
+# 推理模式
+infer_mode = 'none'
 
-# http://blog.csdn.net/leiting_imecas/article/details/72367937
-# tf定义了tf.app.flags，用于支持接受命令行传递参数，相当于接受argv。
-tf.app.flags.DEFINE_integer('rnn_size', 60, 'Number of hidden units in each layer')
-tf.app.flags.DEFINE_integer('num_layers', 2, 'Number of layers in each encoder and decoder')
-tf.app.flags.DEFINE_integer('embedding_size', 128, 'Embedding dimensions of encoder and decoder inputs')
 
-tf.app.flags.DEFINE_float('learning_rate', 0.0001, 'Learning rate')
-tf.app.flags.DEFINE_integer('batch_size', 10, 'Batch size')
-tf.app.flags.DEFINE_integer('numEpochs', 50, 'Maximum # of training epochs')
-tf.app.flags.DEFINE_integer('steps_per_checkpoint', 2, 'Save model checkpoint every this iteration')
-tf.app.flags.DEFINE_string('model_dir', 'model/', 'Path to save model checkpoints')
-tf.app.flags.DEFINE_string('model_name', 'textsum_ckpt', 'File name used for model checkpoints')
-FLAGS = tf.app.flags.FLAGS
+train_graph = tf.Graph()
+infer_graph = tf.Graph()
 
-# data_path = 'data/dataset-cornell-length10-filter1-vocabSize40000.pkl'
-source_path = 'data/article_segment.txt'
-target_path = 'data/summarization_segment.txt'
-id2word, word2id,  trainingSamples = loadDataset(source_path, target_path)
+with train_graph.as_default():
+    train_model = TrainModel(vocab_size,embedding_size,num_units,num_layers,max_target_sequence_length,batch_size,
+                             max_gradient_norm, learning_rate)
+    initializer = tf.global_variables_initializer()
 
-# gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
-with tf.Session() as sess:
-    model = Seq2SeqModel(FLAGS.rnn_size,
-                         FLAGS.num_layers,
-                         FLAGS.embedding_size,
-                         FLAGS.learning_rate,
-                         word2id,
-                         mode='train',
-                         use_attention=True,
-                         beam_search=True,
-                         beam_size=3,
-                         max_gradient_norm=5.0
-                         )
+with infer_graph.as_default():
+    infer_model = InferenceModel(vocab_size,embedding_size,num_units,num_layers,
+                                 max_target_sequence_length, infer_batch_size, beam_size, segment_to_int,infer_mode)
 
-    # 如果存在已经保存的模型的话，就继续训练，否则，就重新开始
-    ckpt = tf.train.get_checkpoint_state(FLAGS.model_dir)
-    if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
-        print('Reloading model parameters..')
-        model.restore(sess, ckpt.model_checkpoint_path)
-    else:
-        print('Created new model parameters..')
-        sess.run(tf.global_variables_initializer())
+checkpoints_path = "model/checkpoints"
 
-    current_step = 0
-    summary_writer = tf.summary.FileWriter(FLAGS.model_dir, graph=sess.graph)
-    for e in range(FLAGS.numEpochs):
-        print("----- Epoch {}/{} -----".format(e + 1, FLAGS.numEpochs))
-        batches = getBatches(trainingSamples, FLAGS.batch_size)
-        # Tqdm 是一个快速，可扩展的Python进度条，可以在 Python 长循环中添加一个进度提示信息，用户只需要封装任意的迭代器 tqdm(iterator)。
-        for nextBatch in tqdm(batches, desc="Training"):
-            _loss, summary = model.train(sess, nextBatch)
+train_sess = tf.Session(graph=train_graph)
+infer_sess = tf.Session(graph=infer_graph)
 
-            current_step += 1
-            # 每多少步进行一次保存
-            if current_step % FLAGS.steps_per_checkpoint == 0:
-                perplexity = math.exp(float(_loss)) if _loss < 300 else float('inf')
-                tqdm.write("----- Step %d -- Loss %s -- Perplexity %.2f" % (current_step, _loss, perplexity))
-                summary_writer.add_summary(summary, current_step)
-                checkpoint_path = os.path.join(FLAGS.model_dir, FLAGS.model_name)
-                model.saver.save(sess, checkpoint_path, global_step=current_step)
+train_sess.run(initializer)
 
+infer_batch = get_infer_batches(source_input, infer_batch_size, vocab_to_int['<PAD>'])
+infer_sources_batch, infer_source_lengths = infer_batch
+for s in infer_sources_batch:
+    print([int_to_vocab[e] for e in s])
+
+for i in itertools.count():
+    for batch_i, batch in enumerate(get_batches(target_input,source_input, batch_size,vocab_to_int['<PAD>'],
+                                                vocab_to_int['<PAD>'])):
+        current_loss = train_model.train(train_sess, batch)
+        print('Epoch %d Batch %d/%d - Training Loss: %f' % (i+1, batch_i+1, 2000 // batch_size, current_loss))
+        if (batch_i+1) % infer_step == 0:
+            checkpoint_path = train_model.saver.save(train_sess, checkpoints_path, global_step=(i*2+batch_i+1))
+            infer_model.saver.restore(infer_sess, checkpoint_path)
+            current_predict = infer_model.infer(infer_sess, infer_batch)
+            print("current_predict: ")
+            for s in current_predict:
+                print([int_to_vocab[e] for e in s])
 
