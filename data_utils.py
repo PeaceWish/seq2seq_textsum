@@ -26,15 +26,23 @@ def loadDataset(source_file, target_file):
 
     # 对字分词进行转换
     # 对于source来说 不需要添加<EOS>标记
-    source_int = [[vocab_to_int.get(letter, vocab_to_int['<UNK>'])
-                   for letter in line.split()] for line in source_data.split('\n')]
-    # 对于target来说 需要添加<EOS>标记
-    target_int = [[vocab_to_int.get(letter, vocab_to_int['<UNK>'])
-                   for letter in line.split()] + [vocab_to_int['<EOS>']] for line in target_data.split('\n')]
-    return int_to_vocab, vocab_to_int, (source_int, target_int)
+    source_input = [[vocab_to_int.get(letter, vocab_to_int['<UNK>']) for letter in line.split()] for line in
+                    source_data.split('\n')]
+    # target_input左补<GO> target_output右补<EOS>
+    target_input = [
+        [vocab_to_int['<GO>']] + [vocab_to_int.get(letter, vocab_to_int['<UNK>']) for letter in line.split()] for line
+        in target_data.split('\n')]
+
+    target_output = [[vocab_to_int.get(letter, vocab_to_int['<UNK>'])
+                      for letter in line.split()] + [vocab_to_int['<EOS>']] for line in target_data.split('\n')]
+
+    return int_to_vocab, vocab_to_int, (source_input, target_input, target_output)
 
 
-def get_batches(targets, sources, batch_size, source_pad_int, target_pad_int):
+
+
+
+def get_batches(source_inputs, target_inputs, target_outputs, batch_size, source_pad_int, target_pad_int):
     def pad_sentence_batch(sentence_batch, pad_int):
         '''
         对batch中的序列进行补全，保证batch中的每行都有相同的sequence_length
@@ -45,23 +53,25 @@ def get_batches(targets, sources, batch_size, source_pad_int, target_pad_int):
         max_sentence = max([len(sentence) for sentence in sentence_batch])
         return [sentence + [pad_int] * (max_sentence - len(sentence)) for sentence in sentence_batch]
 
-    for batch_i in range(0, len(sources) // batch_size):
+    for batch_i in range(0, len(source_inputs) // batch_size):
         start_i = batch_i * batch_size
-        sources_batch = sources[start_i: start_i + batch_size]
-        targets_batch = targets[start_i: start_i + batch_size]
+        source_inputs_batch = source_inputs[start_i: start_i + batch_size]
+        target_inputs_batch = target_inputs[start_i: start_i + batch_size]
+        target_outputs_batch = target_outputs[start_i: start_i + batch_size]
 
-        pad_sources_batch = np.array(pad_sentence_batch(sources_batch, source_pad_int))
-        pad_targets_batch = np.array(pad_sentence_batch(targets_batch, target_pad_int))
+        pad_source_inputs_batch = np.array(pad_sentence_batch(source_inputs_batch, source_pad_int))
+        pad_target_inputs_batch = np.array(pad_sentence_batch(target_inputs_batch, target_pad_int))
+        pad_target_outputs_batch = np.array(pad_sentence_batch(target_outputs_batch, target_pad_int))
 
         targets_lengths = []
-        for target in targets_batch:
+        for target in target_inputs_batch:
             targets_lengths.append(len(target))
 
         source_lengths = []
-        for source in sources_batch:
+        for source in source_inputs_batch:
             source_lengths.append(len(source))
 
-        yield pad_targets_batch, pad_sources_batch, targets_lengths, source_lengths
+        yield pad_source_inputs_batch, pad_target_inputs_batch, pad_target_outputs_batch, source_lengths, targets_lengths
 
 
 def get_infer_batches(sources, batch_size, source_pad_int):
@@ -76,10 +86,12 @@ def get_infer_batches(sources, batch_size, source_pad_int):
         return [sentence + [pad_int] * (max_sentence - len(sentence)) for sentence in sentence_batch]
 
     sources_batch = sources[0: batch_size]
-    pad_sources_batch = pad_sentence_batch(sources_batch, source_pad_int)
+    pad_sources_batch = np.array(pad_sentence_batch(sources_batch, source_pad_int))
     source_lengths = []
     for source in sources_batch:
         source_lengths.append(len(source))
 
     return pad_sources_batch, source_lengths
+
+
 
