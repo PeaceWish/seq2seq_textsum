@@ -20,16 +20,17 @@ class BasicModel(object):
 
 class TrainModel(BasicModel):
     def __init__(self, vocab_size, embedding_size, num_units, num_layers, max_target_sequence_length, batch_size,
-                 max_gradient_norm,
-                 learning_rate):
+                 max_gradient_norm, learning_rate, rnn_mode='bidirection_lstm'):
         BasicModel.__init__(self, vocab_size, embedding_size, num_units, num_layers, max_target_sequence_length,
                             batch_size)
         self.max_gradient_norm = max_gradient_norm
         self.learning_rate = learning_rate
+        self.rnn_mode = rnn_mode
         self._build_model()
         self.saver = tf.train.Saver()
 
     def _build_model(self):
+
         self.encoder_inputs = tf.placeholder(tf.int32, [None, None], name='encoder_inputs')
         self.decoder_inputs = tf.placeholder(tf.int32, [None, None], name='decoder_inputs')
         self.decoder_outputs = tf.placeholder(tf.int32, [None, None], name='decoder_outputs')
@@ -45,12 +46,12 @@ class TrainModel(BasicModel):
         # 构建encoder-decoder
         #  创建encoder
         encoder_inputs_embedded = tf.nn.embedding_lookup(embedding, self.encoder_inputs)
-        encoder_cell = tf.contrib.rnn.MultiRNNCell(
-            [self._get_lstm_cell(self.num_units) for _ in range(self.num_layers)])
-        #  执行encoder 操作
+
+        # 多层LSTM
+        encoder_cell = tf.contrib.rnn.MultiRNNCell([self._get_lstm_cell(self.num_units) for _ in range(self.num_layers)])
         encoder_output, encoder_state = tf.nn.dynamic_rnn(encoder_cell, encoder_inputs_embedded,
-                                                          sequence_length=self.source_sequence_length,
-                                                          dtype=tf.float32)
+                                                              sequence_length=self.source_sequence_length,
+                                                              dtype=tf.float32)
 
         #  创建decoder(多层rnn+attention)
         attention_mechanism = tf.contrib.seq2seq.LuongAttention(num_units=self.num_units,
